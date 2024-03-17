@@ -41,7 +41,7 @@ CXXFLAGS ?= -g -Wall -std=c++14 -march=native -iquote $(QEMU_DIR)/include/qemu/ 
 all: $(SONAMES) libbbv.so libtracer.so
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) $(GLIB_INC) -c -o $@ $<
 
 lib%.so: %.o
 	$(CC) -shared -Wl,-soname,$@ -o $@ $^ $(LDLIBS)

@@ -22,7 +22,7 @@ static bool do_inline;
 /* Plugins need to take care of their own locking */
 static GMutex lock;
 static GHashTable *hotblocks;
-static guint64 limit = 20;
+static guint64 limit = UINT64_MAX;
 
 /*
  * Counting Structure
@@ -48,18 +48,18 @@ static gint cmp_exec_count(gconstpointer a, gconstpointer b)
 
 static void plugin_exit(qemu_plugin_id_t id, void *p)
 {
-    g_autoptr(GString) report = g_string_new("collected ");
+    g_autoptr(GString) report = g_string_new("");
     GList *counts, *it;
     int i;
 
     g_mutex_lock(&lock);
-    g_string_append_printf(report, "%d entries in the hash table\n",
-                           g_hash_table_size(hotblocks));
+    // g_string_append_printf(report, "%d entries in the hash table\n",
+    //                        g_hash_table_size(hotblocks));
     counts = g_hash_table_get_values(hotblocks);
     it = g_list_sort(counts, cmp_exec_count);
 
     if (it) {
-        g_string_append_printf(report, "pc, tcount, icount, ecount\n");
+        // g_string_append_printf(report, "pc, tcount, icount, ecount\n");
 
         for (i = 0; i < limit && it->next; i++, it = it->next) {
             ExecCount *rec = (ExecCount *) it->data;
