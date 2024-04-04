@@ -30,12 +30,13 @@ typedef enum {
     COUNT_NONE
 } CountType;
 
-static int limit = 50;
+static int limit = INT32_MAX;
 static bool do_inline;
 static bool verbose;
 
 static GMutex lock;
 static GHashTable *insns;
+static GHashTable *tbs;
 
 typedef struct {
     const char *class;
@@ -52,6 +53,141 @@ typedef struct {
     uint64_t count;
     InsnClassExecCount *class;
 } InsnExecCount;
+
+
+typedef struct 
+{
+    /* data */
+    uint64_t pc;
+    uint64_t cnt;
+    uint32_t *fusion;
+    uint32_t *total_fusion;
+}TbExecCount;
+
+typedef enum {
+    LoadPair, 
+    StorePair, 
+    FusionMax
+}Fusion;
+
+typedef enum {
+    nop, 
+    lb,
+    lh, 
+    lw, 
+    ld, 
+    lbu, 
+    lhu, 
+    lwu, 
+    sb,  
+    sh, 
+    sw, 
+    sd
+}RISCV;
+
+int decode_insn(uint32_t opcode) {
+
+    int ret = 0;
+
+    if ((opcode & 0x7f) == 0x03) { 
+        switch ((opcode >> 12) & 0x7)
+        {
+        case 0x0:
+            ret = lb;
+            break;
+        case 0x1:
+            ret = lh;
+            break;
+        case 0x2:
+            ret = lw;
+            break;
+        case 0x3:
+            ret = ld;
+            break;
+        case 0x4:
+            ret = lbu;
+            break;
+        case 0x5:
+            ret = lhu;
+            break;
+        case 0x6:
+            ret = lwu;
+            break;
+        default:
+            break;
+        }
+    }
+    else if ((opcode & 0x7f) == 0x23) {
+        switch ((opcode >> 12) & 0x7)
+        {
+        case 0x0:
+            ret = sb;
+            break;
+        case 0x1:
+            ret = sh;
+            break;
+        case 0x2:
+            ret = sw;
+            break;
+        case 0x3:
+            ret = sd;
+            break;
+        default:
+            break;
+        }
+    }
+
+    return ret;
+}
+
+int get_imm(uint32_t opcode) {
+    int inst = decode_insn(opcode);
+    if (inst == lb || inst == lh || inst == lw || inst == ld ||
+        inst == lbu || inst == lhu || inst == lwu ) {
+        return ((int) opcode) >> 20;
+    }
+    else if (inst == sb || inst == sh || inst == sw || inst == sd) {
+        return ((opcode >> 7) & 0x1f) | ((((int) opcode) >> 25) << 5);
+    }
+
+    return INT16_MIN;
+}
+
+int check_fusion(uint32_t opcode1, uint32_t opcode2) {
+    int inst1 = decode_insn(opcode1);
+    int inst2 = decode_insn(opcode2);
+    int imm1 = get_imm(opcode1);
+    int imm2 = get_imm(opcode2);
+    fprintf(stderr, "inst1: %d, imm1: %d, inst2: %d, imm2: %d\n", inst1, imm1, inst2, imm2);
+
+    if ((inst1 == lb || inst1 == lbu) && (inst2 == lb || inst2 == lbu) && abs(imm1 - imm2) == 1) {
+        return LoadPair;
+    }
+    if ((inst1 == lh || inst1 == lhu) && (inst2 == lh || inst2 == lhu) && abs(imm1 - imm2) == 2) {
+        return LoadPair;
+    }
+    if ((inst1 == lw || inst1 == lwu) && (inst2 == lw || inst2 == lwu) && abs(imm1 - imm2) == 4) {
+        return LoadPair;
+    }
+    if ((inst1 == ld) && inst1 == inst2 && abs(imm1 - imm2) == 8) {
+        return LoadPair;
+    }
+    if ((inst1 == sb) && inst1 == inst2 && abs(imm1 - imm2) == 1) {
+        return StorePair;
+    }
+    if ((inst1 == sh) && inst1 == inst2 && abs(imm1 - imm2) == 2) {
+        return StorePair;
+    }
+    if ((inst1 == sw) && inst1 == inst2 && abs(imm1 - imm2) == 4) {
+        return StorePair;
+    }
+    if ((inst1 == sd) && inst1 == inst2 && abs(imm1 - imm2) == 8) {
+        return StorePair;
+    }
+
+    return -1;
+}
+
 
 /*
  * Matchers for classes of instructions, order is important.
@@ -113,6 +249,46 @@ static InsnClassExecCount aarch64_insn_classes[] = {
     { "Unclassified",        "unclas", 0x00000000, 0x00000000, COUNT_CLASS},
 };
 
+static InsnClassExecCount riscv64_insn_classes[] = {
+    { "32/64bits isnt11",                     "addi",  0x00000003, 0x00000011, COUNT_CLASS},
+    { "32/64bits Compress isnt00",            "addi",  0x00000003, 0x00000000, COUNT_CLASS},
+    { "32/64bits Compress isnt01",            "addi",  0x00000003, 0x00000001, COUNT_CLASS},
+    { "32/64bits Compress isnt10",            "addi",  0x00000003, 0x00000010, COUNT_CLASS},
+    { "32bits Arithmatic GPR + imm",        "addi",  0x0000007f, 0x00000013, COUNT_CLASS},
+    { "32bits Arithmatic GPR + GPR",        "addi",  0x0000007f, 0x00000033, COUNT_CLASS},
+    { "64bits Arithmatic GPR + imm",        "addi",  0x0000007f, 0x0000001b, COUNT_CLASS},
+    { "64bits Arithmatic GPR + GPR",        "addi",  0x0000007f, 0x0000003b, COUNT_CLASS},
+    { "32/64bits Atomic inst",              "addi",  0x0000007f, 0x0000002f, COUNT_CLASS},
+    { "32/64bits Float point isnt",         "addi",  0x0000007f, 0x00000043, COUNT_CLASS},
+    { "32/64bits Float point isnt",         "addi",  0x0000007f, 0x00000047, COUNT_CLASS},
+    { "32/64bits Float point isnt",         "addi",  0x0000007f, 0x0000004b, COUNT_CLASS},
+    { "32/64bits Float point isnt",         "addi",  0x0000007f, 0x0000004f, COUNT_CLASS},
+    { "32/64bits Float point isnt",         "addi",  0x0000007f, 0x00000053, COUNT_CLASS},
+    { "flw/fld",                            "addi",  0x0000007f, 0x00000007, COUNT_CLASS},
+    { "fsw/fsd",                            "addi",  0x0000007f, 0x00000027, COUNT_CLASS},
+    { "branch",                             "addi",  0x00000073, 0x00000063, COUNT_CLASS},
+    { "Fence",                              "addi",  0x0000007f, 0x0000000f, COUNT_CLASS},
+    { "Csr",                                "addi",  0x0000007f, 0x00000073, COUNT_CLASS},
+    { "lb",                                 "addi",  0x0000707f, 0x00000003, COUNT_CLASS},
+    { "lh",                                 "addi",  0x0000707f, 0x00001003, COUNT_CLASS},
+    { "lw",                                 "addi",  0x0000707f, 0x00002003, COUNT_CLASS},
+    { "ld",                                 "addi",  0x0000707f, 0x00003003, COUNT_CLASS},
+    { "lbu",                                "addi",  0x0000707f, 0x00004003, COUNT_CLASS},
+    { "lhu",                                "addi",  0x0000707f, 0x00005003, COUNT_CLASS},
+    { "lwu",                                "addi",  0x0000707f, 0x00006003, COUNT_CLASS},
+    { "sb",                                 "addi",  0x0000707f, 0x00000023, COUNT_CLASS},
+    { "sh",                                 "addi",  0x0000707f, 0x00001023, COUNT_CLASS},
+    { "sw",                                 "addi",  0x0000707f, 0x00002023, COUNT_CLASS},
+    { "sd",                                 "addi",  0x0000707f, 0x00003023, COUNT_CLASS},
+    { "th.ldd",                             "addi",  0xf800707f, 0xf800400b, COUNT_CLASS},
+    { "th.lwd",                             "addi",  0xf800707f, 0xe000400b, COUNT_CLASS},
+    { "th.lwud",                            "addi",  0xf800707f, 0xf000400b, COUNT_CLASS},
+    { "th.sdd",                             "addi",  0xf800707f, 0xf800500b, COUNT_CLASS},
+    { "th.swd",                             "addi",  0xf800707f, 0xe000500b, COUNT_CLASS},
+    /* Unclassified */
+    { "Unclassified",                       "unclas", 0x00000000, 0x00000000, COUNT_CLASS},
+};
+
 static InsnClassExecCount sparc32_insn_classes[] = {
     { "Call",                "call",   0xc0000000, 0x40000000, COUNT_CLASS},
     { "Branch ICond",        "bcc",    0xc1c00000, 0x00800000, COUNT_CLASS},
@@ -147,6 +323,7 @@ typedef struct {
 
 static ClassSelector class_tables[] = {
     { "aarch64", aarch64_insn_classes, ARRAY_SIZE(aarch64_insn_classes) },
+    { "riscv64", riscv64_insn_classes, ARRAY_SIZE(riscv64_insn_classes) },
     { "sparc",   sparc32_insn_classes, ARRAY_SIZE(sparc32_insn_classes) },
     { "sparc64", sparc64_insn_classes, ARRAY_SIZE(sparc64_insn_classes) },
     { NULL, default_insn_classes, ARRAY_SIZE(default_insn_classes) },
@@ -169,12 +346,19 @@ static void free_record(gpointer data)
     g_free(rec);
 }
 
+static void free_record_tb(gpointer data)
+{
+    // TbExecCount *rec = (TbExecCount *) data;
+}
+
 static void plugin_exit(qemu_plugin_id_t id, void *p)
 {
     g_autoptr(GString) report = g_string_new("Instruction Classes:\n");
     int i;
     GList *counts;
     InsnClassExecCount *class = NULL;
+
+    long long sum = 0;
 
     for (i = 0; i < class_table_sz; i++) {
         class = &class_table[i];
@@ -185,6 +369,7 @@ static void plugin_exit(qemu_plugin_id_t id, void *p)
                                        "Class: %-24s\t(%" PRId64 " hits)\n",
                                        class->class,
                                        class->count);
+                sum += class->count;
             }
             break;
         case COUNT_INDIVIDUAL:
@@ -220,7 +405,36 @@ static void plugin_exit(qemu_plugin_id_t id, void *p)
         g_list_free(counts);
     }
 
+    g_string_append_printf(report, "Sum: \t%" PRId64 " hits\n", sum);
+
+    int *total = calloc(sizeof(int), FusionMax);
+
+    counts = g_hash_table_get_values(tbs);
+    if (counts && g_list_next(counts)) {
+
+        for (i = 0; i < limit && g_list_next(counts);
+             i++, counts = g_list_next(counts)) {
+            TbExecCount *rec = (TbExecCount *) counts->data;
+
+            fprintf(stderr, "TB%d cnt: %d\n", i, rec->cnt);
+
+            for(int j=0 ; j < FusionMax ; j++) {
+                total[j] += rec->total_fusion[j];
+            }
+
+            for(int i=0;i<FusionMax;i++) {
+                fprintf(stderr, "fusion%d: %d\n", i, rec->total_fusion[i]);
+            }
+        }
+        g_list_free(counts);
+    }
+
+    for(int i=0;i<FusionMax;i++) {
+        g_string_append_printf(report, "%"PRId64" hits\n", total[i]);
+    }
+
     g_hash_table_destroy(insns);
+    g_hash_table_destroy(tbs);
 
     qemu_plugin_outs(report->str);
 }
@@ -228,12 +442,68 @@ static void plugin_exit(qemu_plugin_id_t id, void *p)
 static void plugin_init(void)
 {
     insns = g_hash_table_new_full(NULL, g_direct_equal, NULL, &free_record);
+    tbs = g_hash_table_new_full(NULL, g_direct_equal, NULL, &free_record_tb);
 }
 
 static void vcpu_insn_exec_before(unsigned int cpu_index, void *udata)
 {
     uint64_t *count = (uint64_t *) udata;
     (*count)++;
+}
+
+static void vcpu_tb_exec_before(unsigned int cpu_index, void *udata) {
+    TbExecCount *rec = (TbExecCount *) udata;
+    rec->cnt++;
+    for(int i=0;i<FusionMax;i++) {
+        rec->total_fusion[i] += rec->fusion[i];
+    }
+
+}
+
+static TbExecCount* find_counter_tb(struct qemu_plugin_tb* tb) {
+    g_mutex_lock(&lock);
+
+    
+    uint64_t pc = qemu_plugin_tb_vaddr(tb);
+    size_t insns = qemu_plugin_tb_n_insns(tb);
+    uint64_t hash = pc ^ insns;
+
+    TbExecCount* icount = (TbExecCount*) g_hash_table_lookup(tbs, (gconstpointer) hash);
+
+    if (!icount) {
+        icount = g_new0(TbExecCount, 1);
+        icount->pc = pc;
+        icount->cnt = 0;
+        icount->fusion = calloc(FusionMax, sizeof(uint32_t));
+        icount->total_fusion = calloc(FusionMax, sizeof(uint32_t));
+        
+        g_hash_table_insert(tbs, (gpointer) hash, (gpointer) icount);
+
+        fprintf(stderr, "insert hash: %llu, pc: %x to icount: %x\n", hash, pc, icount);
+    }
+
+    size_t n = qemu_plugin_tb_n_insns(tb);
+    uint32_t opcode_arr[n];
+
+    for(int i=0;i<n;i++) {
+        struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
+        opcode_arr[i] = *((uint32_t *)qemu_plugin_insn_data(insn));
+
+        if (i >= 1) {
+            int fusion_type = check_fusion(opcode_arr[i-1], opcode_arr[i]);
+            if (fusion_type != -1) {
+                icount->fusion[fusion_type] += 1;
+                i++;
+            }
+
+            fprintf(stderr, "fusion_type: %d\n", fusion_type);
+        }
+    }
+
+
+    g_mutex_unlock(&lock);
+
+    return icount;
 }
 
 static uint64_t *find_counter(struct qemu_plugin_insn *insn)
@@ -314,6 +584,13 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
             }
         }
     }
+
+    TbExecCount* icount = find_counter_tb(tb);
+    // fprintf(stderr, "id: %llu, map tb: %x to icount: %x\n", id, &tb, icount);
+    for(int i=0;i<FusionMax;i++) {
+        fprintf(stderr, "fusion%d: %d\n", i, icount->fusion[i]);
+    }
+    qemu_plugin_register_vcpu_tb_exec_cb(tb, vcpu_tb_exec_before, QEMU_PLUGIN_CB_NO_REGS, icount);
 }
 
 QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
