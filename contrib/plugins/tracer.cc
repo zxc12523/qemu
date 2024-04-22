@@ -56,6 +56,8 @@ void plugin_exit(qemu_plugin_id_t id, void *p)
     for(int i=0;i<trace_files.size();i++) {
         trace_files[i].close();
     }
+
+    std::cerr << "Inst Counts" << inst_count << '\n';
 }
 
 static void plugin_init(std::string& bench_name, std::string& arch)
@@ -72,14 +74,14 @@ static void plugin_init(std::string& bench_name, std::string& arch)
 
         char *s = (char*)line.c_str();
 
-        // std::cout << line << std::endl;
+        // std::cerr << line << std::endl;
 
         // not good enough, FIXME
         if (!line.empty()) {
             uint32_t val = atoi(strtok(s, " "));
             char* group = strtok(NULL, " ");
 
-            std::cout << "interval: " << val <<  " group: " << group << " idx: " << i << '\n';
+            std::cerr << "interval: " << val <<  " group: " << group << " idx: " << i << '\n';
 
             interval_set.insert(val);
             interval2idx[val] = i;
@@ -104,8 +106,8 @@ static void vcpu_insn_exec_before(unsigned int cpu_index, void *udata)
     interval = inst_dumped / INTERVAL_SIZE;
 
     if (interval_cur.find(interval) == interval_cur.end()) {
-        std::cout << "Current Interval: " << interval << '\n';
-        std::cout.flush();
+        std::cerr << "Current Interval: " << interval << '\n';
+        std::cerr.flush();
         interval_cur.insert(interval);
     }
 
@@ -116,15 +118,15 @@ static void vcpu_insn_exec_before(unsigned int cpu_index, void *udata)
         }
     }
 
-    // std::cout << "Inst count: " << std::dec << inst_count << " Insn: "  << *(int*)data << '\n';
+    std::cerr << "Inst count: " << std::dec << inst_dumped << " Insn: "  << *(uint32_t*)qemu_plugin_insn_data(insn) << '\n';
 
-    // std::cout << " Instruction: " << (const char*) qemu_plugin_insn_disas(insn) << std::endl;
+    // std::cerr << " Instruction: " << (const char*) qemu_plugin_insn_disas(insn) << std::endl;
 
     inst_dumped++;
 
     // if (inst_dumped >= INTERVAL_SIZE) {
-    //     std::cout << "Inst Dumped: " << inst_dumped << '\n';
-    //     std::cout.flush();
+    //     std::cerr << "Inst Dumped: " << inst_dumped << '\n';
+    //     std::cerr.flush();
     //     // qemu_plugin_reset(plugin_id, callback_reset);
     // }
 
@@ -133,7 +135,7 @@ static void vcpu_insn_exec_before(unsigned int cpu_index, void *udata)
 
 static void vcpu_mem(unsigned int cpu_index, qemu_plugin_meminfo_t meminfo, uint64_t vaddr, void *udata) {
     uint64_t pc = (uint64_t)udata;
-    std::cout << "Mem callback 0x" << std::hex << pc << " vaddr:" << vaddr
+    std::cerr << "Mem callback 0x" << std::hex << pc << " vaddr:" << vaddr
               << " store:" << qemu_plugin_mem_is_store(meminfo) << std::endl;
 }
 
@@ -141,7 +143,7 @@ static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb);
 
 static void callback_reset(qemu_plugin_id_t id)
 {
-    std::cout << "Resetting plugin" << std::endl;
+    std::cerr << "Resetting plugin" << std::endl;
     qemu_plugin_register_vcpu_tb_trans_cb(id, tb_record);
 }
 
@@ -149,36 +151,43 @@ static void tb_exec(unsigned int cpu_index, void *udata)
 {
     lock.lock();
     
-    interval = inst_count / INTERVAL_SIZE;
+    // interval = inst_count / INTERVAL_SIZE;
 
     struct qemu_plugin_tb *tb = (struct qemu_plugin_tb *)udata;
 
-    if (interval_cur.find(interval) == interval_cur.end()) {
-        std::cout << "Current Interval: " << interval << '\n';
-        std::cout.flush();
-        interval_cur.insert(interval);
-    }
+    uint64_t pc = qemu_plugin_tb_vaddr(tb);
+    size_t insns = qemu_plugin_tb_n_insns(tb);
 
-    // std::cout << "Inst Count: " << inst_count << " Inst Dumped: " << inst_dumped << " Inst Pairs: " << instructions.size() << '\n';
+    inst_count += insns;
 
-    if (interval_set.find(interval) != interval_set.end()) {
+    std::cerr << "Inst Counts: " << std::dec << inst_count << ", PC: " << std::hex << pc << ", Insns: " << std::dec << insns << '\n';
 
-        size_t insns = qemu_plugin_tb_n_insns(tb);
+    // if (interval_cur.find(interval) == interval_cur.end()) {
+    //     std::cerr << "Current Interval: " << interval << '\n';
+    //     std::cerr.flush();
+    //     interval_cur.insert(interval);
+    // }
 
-        for (size_t i = 0; i < insns; i++) {
-            struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
-            trace_files[interval2idx[interval]] << qemu_plugin_insn_size(insn);
-            trace_files[interval2idx[interval]].write((char*)qemu_plugin_insn_data(insn), qemu_plugin_insn_size(insn));
-            inst_dumped++;
-        }
-    }
+    // // std::cerr << "Inst Count: " << inst_count << " Inst Dumped: " << inst_dumped << " Inst Pairs: " << instructions.size() << '\n';
 
-    if (inst_dumped > INTERVAL_SIZE) {
-        std::cout << "Inst Dumped: " << inst_dumped << '\n';
-        std::cout.flush();
-        inst_dumped = 0;
-        // qemu_plugin_reset(plugin_id, callback_reset);
-    }
+    // if (interval_set.find(interval) != interval_set.end()) {
+
+    //     size_t insns = qemu_plugin_tb_n_insns(tb);
+
+    //     for (size_t i = 0; i < insns; i++) {
+    //         struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
+    //         trace_files[interval2idx[interval]] << qemu_plugin_insn_size(insn);
+    //         trace_files[interval2idx[interval]].write((char*)qemu_plugin_insn_data(insn), qemu_plugin_insn_size(insn));
+    //         inst_dumped++;
+    //     }
+    // }
+
+    // if (inst_dumped > INTERVAL_SIZE) {
+    //     std::cerr << "Inst Dumped: " << inst_dumped << '\n';
+    //     std::cerr.flush();
+    //     inst_dumped = 0;
+    //     // qemu_plugin_reset(plugin_id, callback_reset);
+    // }
 
     lock.unlock();
 }
@@ -186,7 +195,7 @@ static void tb_exec(unsigned int cpu_index, void *udata)
 static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 {
     size_t insns = qemu_plugin_tb_n_insns(tb);
-    qemu_plugin_register_vcpu_tb_exec_inline(tb, QEMU_PLUGIN_INLINE_ADD_U64, &inst_count, insns);
+    // qemu_plugin_register_vcpu_tb_exec_inline(tb, QEMU_PLUGIN_INLINE_ADD_U64, &inst_count, insns);
     // qemu_plugin_register_vcpu_tb_exec_cb(tb, tb_exec, QEMU_PLUGIN_CB_NO_REGS, tb);
 
     for (size_t i = 0; i < insns; i++) {
@@ -196,7 +205,7 @@ static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
         qemu_plugin_register_vcpu_insn_exec_cb(insn, vcpu_insn_exec_before, QEMU_PLUGIN_CB_NO_REGS, (void *)insn);
         // qemu_plugin_register_vcpu_mem_cb(insn, vcpu_mem, QEMU_PLUGIN_CB_NO_REGS, rw, (void *)pc);
         
-        // std::cout << "Installing inst and mem cbs for insn " << qemu_plugin_insn_disas(insn) << " insn: " << std::hex << *(int*)qemu_plugin_insn_data(insn) << std::endl;
+        // std::cerr << "Installing inst and mem cbs for insn " << qemu_plugin_insn_disas(insn) << " insn: " << std::hex << *(int*)qemu_plugin_insn_data(insn) << std::endl;
     }
 }
 

@@ -70,7 +70,7 @@ static gint cmp_exec_count(gconstpointer a, gconstpointer b)
 {
     ExecCount *ea = (ExecCount *) a;
     ExecCount *eb = (ExecCount *) b;
-    return (ea->exec_count * ea->insns) > (eb->exec_count * eb->insns) ? -1 : 1;
+    return (ea->exec_count) > (eb->exec_count) ? -1 : 1;
 }
 
 static void plugin_exit(qemu_plugin_id_t id, void *p)
@@ -123,12 +123,12 @@ static void tb_exec(unsigned int cpu_index, void *udata)
             bb_stat << "T";
             while (tb_count < 100) {
                 ExecCount *rec = (ExecCount *) it->data;
-                pc_file << std::dec << interval_cnt << ":O:" << std::hex << "0x" << rec->pc << " counts:" << std::dec << rec->exec_count << std::endl;
+                pc_file << std::dec << interval_cnt << ":O:" << std::hex << "0x" << rec->pc << " counts:" << std::dec <<  rec->exec_count << std::endl;
                 pc_file << std::dec << interval_cnt << ":N:" << std::hex << "0x" << hotblocks_vec[tb_count].pc << " counts:" << std::dec << hotblocks_vec[tb_count].exec_count << std::endl;
                 tb_count++;
 
                 if (rec->exec_count) {
-                    bb_stat << " :" << rec->id << ":" << rec->exec_count * rec->insns;
+                    bb_stat << " :" << rec->id << ":" << rec->exec_count;
                     rec->exec_count = 0;
                 }
                 it = it->next;

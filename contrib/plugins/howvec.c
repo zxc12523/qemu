@@ -60,11 +60,18 @@ typedef struct
     /* data */
     uint64_t pc;
     uint64_t cnt;
-    uint32_t *fusion;
-    uint32_t *total_fusion;
+    uint64_t *fusion;
+    uint64_t *total_fusion;
 }TbExecCount;
 
 typedef enum {
+    LuiAddiPair,
+    AuipcAddiPair,
+    AuipcLoadPair,
+    ShaddLoadPair,
+    AddLoadPair,
+    ShiftAddPair,
+    SlliSrliPair,
     LoadPair, 
     StorePair, 
     FusionMax
@@ -82,109 +89,326 @@ typedef enum {
     sb,  
     sh, 
     sw, 
-    sd
+    sd, 
+    lui, 
+    auipc, 
+    addi, 
+    addiw, 
+    slli, 
+    srli, 
+    add, 
+    sh1add, 
+    sh1add_uw, 
+    sh2add, 
+    sh2add_uw, 
+    sh3add, 
+    sh3add_uw, 
 }RISCV;
 
-int decode_insn(uint32_t opcode) {
+typedef struct {
+    uint8_t rd;
+    uint8_t rs1;
+    uint8_t rs2;
+    uint8_t opcode;
+    int imm;
+}inst;
 
-    int ret = 0;
+int decode_insn(inst *new_inst, uint32_t opcode) {
+
+    int ret = -1;
 
     if ((opcode & 0x7f) == 0x03) { 
         switch ((opcode >> 12) & 0x7)
         {
         case 0x0:
-            ret = lb;
+            new_inst->opcode = lb;
             break;
         case 0x1:
-            ret = lh;
+            new_inst->opcode = lh;
             break;
         case 0x2:
-            ret = lw;
+            new_inst->opcode = lw;
             break;
         case 0x3:
-            ret = ld;
+            new_inst->opcode = ld;
             break;
         case 0x4:
-            ret = lbu;
+            new_inst->opcode = lbu;
             break;
         case 0x5:
-            ret = lhu;
+            new_inst->opcode = lhu;
             break;
         case 0x6:
-            ret = lwu;
+            new_inst->opcode = lwu;
             break;
         default:
             break;
         }
+
+        new_inst->rd = (opcode >> 7) & 0x1f;
+        new_inst->rs1 = (opcode >> 15) & 0x1f;
+        new_inst->imm = ((int) opcode) >> 20;
+
+        ret = 0;
     }
     else if ((opcode & 0x7f) == 0x23) {
         switch ((opcode >> 12) & 0x7)
         {
         case 0x0:
-            ret = sb;
+            new_inst->opcode = sb;
             break;
         case 0x1:
-            ret = sh;
+            new_inst->opcode = sh;
             break;
         case 0x2:
-            ret = sw;
+            new_inst->opcode = sw;
             break;
         case 0x3:
-            ret = sd;
+            new_inst->opcode = sd;
             break;
         default:
             break;
         }
+
+        new_inst->rs1 = (opcode >> 15) & 0x1f;
+        new_inst->rs2 = (opcode >> 20) & 0x1f;
+        new_inst->imm = ((opcode >> 7) & 0x1f) | ((((int) opcode) >> 25) << 5);
+        ret = 0;
+    }
+    else if ((opcode & 0x7f) == 0x37) {
+        new_inst->opcode = lui;
+        new_inst->rd = (opcode >> 7) & 0x1f;
+        new_inst->imm = ((int) opcode) >> 12;
+        ret = 0;
+    }
+    else if ((opcode & 0x7f) == 0x17) {
+        new_inst->opcode = auipc;
+        new_inst->rd = (opcode >> 7) & 0x1f;
+        new_inst->imm = ((int) opcode) >> 12;
+        ret = 0;
+    }
+    else if ((opcode & 0x7f) == 0x13) {
+        switch ((opcode >> 12) & 0x7)
+        {
+        case 0x0:
+            new_inst->opcode = addi;
+            break;
+        case 0x1:
+            new_inst->opcode = slli;
+            break;
+        case 0x5:
+            new_inst->opcode = srli;
+            break;
+        default:
+            break;
+        }
+        
+        new_inst->rd = (opcode >> 7) & 0x1f;
+        new_inst->rs1 = (opcode >> 15) & 0x1f;
+        new_inst->imm = ((int) opcode) >> 20;
+        ret = 0;
+    }
+    else if ((opcode & 0x7f) == 0x1b) {
+        switch ((opcode >> 12) & 0x7)
+        {
+        case 0x0:
+            new_inst->opcode = addiw;
+            break;
+        }
+        
+        new_inst->rd = (opcode >> 7) & 0x1f;
+        new_inst->rs1 = (opcode >> 15) & 0x1f;
+        new_inst->imm = ((int) opcode) >> 20;
+        ret = 0;
+    }
+    else if ((opcode & 0x7f) == 0x33) {
+
+        switch ((opcode >> 12) & 0x7)
+        {
+
+        case 0x0:
+            switch ((opcode >> 25) & 0x7f)
+            {
+            case 0x0:
+                new_inst->opcode = add;
+                break;
+            default:
+                break;
+            }
+            break;
+
+        case 0x2:
+            switch ((opcode >> 25) & 0x7f)
+            {
+            case 0x10:
+                new_inst->opcode = sh1add;
+                break;
+            default:
+                break;
+            }
+            break;
+
+        case 0x4:
+            switch ((opcode >> 25) & 0x7f)
+            {
+            case 0x10:
+                new_inst->opcode = sh2add;
+                break;
+            default:
+                break;
+            }
+            break;
+
+        case 0x6:
+            switch ((opcode >> 25) & 0x7f)
+            {
+            case 0x10:
+                new_inst->opcode = sh3add;
+                break;
+            default:
+                break;
+            }
+            break;
+            
+        default:
+            break;
+        }
+
+
+        new_inst->rd = (opcode >> 7) & 0x1f;
+        new_inst->rs1 = (opcode >> 15) & 0x1f;
+        new_inst->rs2 = (opcode >> 20) & 0x1f;
+        ret = 0;
+    }
+    else if ((opcode & 0x7f) == 0x3b) {
+
+        switch ((opcode >> 12) & 0x7)
+        {
+
+        case 0x2:
+            switch ((opcode >> 25) & 0x7f)
+            {
+            case 0x10:
+                new_inst->opcode = sh1add_uw;
+                break;
+            default:
+                break;
+            }
+            break;
+
+        case 0x4:
+            switch ((opcode >> 25) & 0x7f)
+            {
+            case 0x10:
+                new_inst->opcode = sh2add_uw;
+                break;
+            default:
+                break;
+            }
+            break;
+
+        case 0x6:
+            switch ((opcode >> 25) & 0x7f)
+            {
+            case 0x10:
+                new_inst->opcode = sh3add_uw;
+                break;
+            default:
+                break;
+            }
+            break;
+            
+        default:
+            break;
+        }
+
+
+        new_inst->rd = (opcode >> 7) & 0x1f;
+        new_inst->rs1 = (opcode >> 15) & 0x1f;
+        new_inst->rs2 = (opcode >> 20) & 0x1f;
+        ret = 0;
     }
 
     return ret;
 }
 
-int get_imm(uint32_t opcode) {
-    int inst = decode_insn(opcode);
-    if (inst == lb || inst == lh || inst == lw || inst == ld ||
-        inst == lbu || inst == lhu || inst == lwu ) {
-        return ((int) opcode) >> 20;
-    }
-    else if (inst == sb || inst == sh || inst == sw || inst == sd) {
-        return ((opcode >> 7) & 0x1f) | ((((int) opcode) >> 25) << 5);
-    }
-
-    return INT16_MIN;
+int checkSameDest(inst* inst1, inst* inst2) {
+    return inst1->rd == inst2->rd;
 }
 
-int check_fusion(uint32_t opcode1, uint32_t opcode2) {
-    int inst1 = decode_insn(opcode1);
-    int inst2 = decode_insn(opcode2);
-    int imm1 = get_imm(opcode1);
-    int imm2 = get_imm(opcode2);
-    fprintf(stderr, "inst1: %d, imm1: %d, inst2: %d, imm2: %d\n", inst1, imm1, inst2, imm2);
+int checkDataDependency(inst* inst1, inst* inst2) {
+    return (inst1->rd == inst2->rs1) || (inst1->rd == inst2->rs2);
+}
 
-    if ((inst1 == lb || inst1 == lbu) && (inst2 == lb || inst2 == lbu) && abs(imm1 - imm2) == 1) {
-        return LoadPair;
-    }
-    if ((inst1 == lh || inst1 == lhu) && (inst2 == lh || inst2 == lhu) && abs(imm1 - imm2) == 2) {
-        return LoadPair;
-    }
-    if ((inst1 == lw || inst1 == lwu) && (inst2 == lw || inst2 == lwu) && abs(imm1 - imm2) == 4) {
-        return LoadPair;
-    }
-    if ((inst1 == ld) && inst1 == inst2 && abs(imm1 - imm2) == 8) {
-        return LoadPair;
-    }
-    if ((inst1 == sb) && inst1 == inst2 && abs(imm1 - imm2) == 1) {
-        return StorePair;
-    }
-    if ((inst1 == sh) && inst1 == inst2 && abs(imm1 - imm2) == 2) {
-        return StorePair;
-    }
-    if ((inst1 == sw) && inst1 == inst2 && abs(imm1 - imm2) == 4) {
-        return StorePair;
-    }
-    if ((inst1 == sd) && inst1 == inst2 && abs(imm1 - imm2) == 8) {
-        return StorePair;
-    }
+int check_fusion(inst* inst1, inst* inst2) {
 
+    if ((inst1->opcode == lui && inst2->opcode == addi) && 
+        checkSameDest(inst1, inst2) && checkDataDependency(inst1, inst2)) {
+            return LuiAddiPair;
+    }
+    if ((inst1->opcode == auipc && inst2->opcode == addi) && 
+        checkSameDest(inst1, inst2) && checkDataDependency(inst1, inst2)){
+            return AuipcAddiPair;
+    }
+    if ((inst1->opcode == auipc && inst2->opcode == ld) && 
+        checkSameDest(inst1, inst2) && checkDataDependency(inst1, inst2)){
+            return AuipcLoadPair;
+    }
+    if ((inst1->opcode == slli && inst2->opcode == add) && 
+        checkSameDest(inst1, inst2) && checkDataDependency(inst1, inst2)){
+            return ShiftAddPair;
+    }
+    if ((inst1->opcode == slli && inst2->opcode == srli) && 
+        checkSameDest(inst1, inst2) && checkDataDependency(inst1, inst2)){
+            return SlliSrliPair;
+    }
+    if ((inst1->opcode == add && 
+        (inst2->opcode == ld || 
+        inst2->opcode == lw || 
+        inst2->opcode == lh || 
+        inst2->opcode == lb ||
+        inst2->opcode == lwu || 
+        inst2->opcode == lhu || 
+        inst2->opcode == lbu)) && (inst2->imm == 0) && 
+        checkSameDest(inst1, inst2) && checkDataDependency(inst1, inst2)){
+            return AddLoadPair;
+    }
+    if (((inst1->opcode == sh1add || inst1->opcode == sh1add_uw) && (inst2->opcode == lh || inst2->opcode == lhu)) && checkSameDest(inst1, inst2) && checkDataDependency(inst1, inst2)) {
+        return ShaddLoadPair;
+    }
+    if (((inst1->opcode == sh2add || inst1->opcode == sh2add_uw) && (inst2->opcode == lw || inst2->opcode == lwu)) && checkSameDest(inst1, inst2) && checkDataDependency(inst1, inst2)) {
+        return ShaddLoadPair;
+    }
+    if (((inst1->opcode == sh1add || inst1->opcode == sh1add_uw) && (inst2->opcode == ld)) && checkSameDest(inst1, inst2) && checkDataDependency(inst1, inst2)) {
+        return ShaddLoadPair;
+    }
+    if (inst1->opcode == inst2->opcode) {
+        if ((inst1->opcode == lb || inst1->opcode == lbu) && abs(inst1->imm - inst2->imm) == 1) {
+            return LoadPair;
+        }
+        if ((inst1->opcode == lh || inst1->opcode == lhu) && abs(inst1->imm - inst2->imm) == 2) {
+            return LoadPair;
+        }
+        if ((inst1->opcode == lw || inst1->opcode == lwu) && abs(inst1->imm - inst2->imm) == 4) {
+            return LoadPair;
+        }
+        if ((inst1->opcode == ld) && abs(inst1->imm - inst2->imm) == 8) {
+            return LoadPair;
+        }
+        if ((inst1->opcode == sb) && abs(inst1->imm - inst2->imm) == 1) {
+            return StorePair;
+        }
+        if ((inst1->opcode == sh) && abs(inst1->imm - inst2->imm) == 2) {
+            return StorePair;
+        }
+        if ((inst1->opcode == sw) && abs(inst1->imm - inst2->imm) == 4) {
+            return StorePair;
+        }
+        if ((inst1->opcode == sd) && abs(inst1->imm - inst2->imm) == 8) {
+            return StorePair;
+        }
+    }
+    
     return -1;
 }
 
@@ -250,41 +474,33 @@ static InsnClassExecCount aarch64_insn_classes[] = {
 };
 
 static InsnClassExecCount riscv64_insn_classes[] = {
-    { "32/64bits isnt11",                     "addi",  0x00000003, 0x00000011, COUNT_CLASS},
-    { "32/64bits Compress isnt00",            "addi",  0x00000003, 0x00000000, COUNT_CLASS},
-    { "32/64bits Compress isnt01",            "addi",  0x00000003, 0x00000001, COUNT_CLASS},
-    { "32/64bits Compress isnt10",            "addi",  0x00000003, 0x00000010, COUNT_CLASS},
-    { "32bits Arithmatic GPR + imm",        "addi",  0x0000007f, 0x00000013, COUNT_CLASS},
-    { "32bits Arithmatic GPR + GPR",        "addi",  0x0000007f, 0x00000033, COUNT_CLASS},
-    { "64bits Arithmatic GPR + imm",        "addi",  0x0000007f, 0x0000001b, COUNT_CLASS},
-    { "64bits Arithmatic GPR + GPR",        "addi",  0x0000007f, 0x0000003b, COUNT_CLASS},
-    { "32/64bits Atomic inst",              "addi",  0x0000007f, 0x0000002f, COUNT_CLASS},
-    { "32/64bits Float point isnt",         "addi",  0x0000007f, 0x00000043, COUNT_CLASS},
-    { "32/64bits Float point isnt",         "addi",  0x0000007f, 0x00000047, COUNT_CLASS},
-    { "32/64bits Float point isnt",         "addi",  0x0000007f, 0x0000004b, COUNT_CLASS},
-    { "32/64bits Float point isnt",         "addi",  0x0000007f, 0x0000004f, COUNT_CLASS},
-    { "32/64bits Float point isnt",         "addi",  0x0000007f, 0x00000053, COUNT_CLASS},
-    { "flw/fld",                            "addi",  0x0000007f, 0x00000007, COUNT_CLASS},
-    { "fsw/fsd",                            "addi",  0x0000007f, 0x00000027, COUNT_CLASS},
-    { "branch",                             "addi",  0x00000073, 0x00000063, COUNT_CLASS},
-    { "Fence",                              "addi",  0x0000007f, 0x0000000f, COUNT_CLASS},
-    { "Csr",                                "addi",  0x0000007f, 0x00000073, COUNT_CLASS},
-    { "lb",                                 "addi",  0x0000707f, 0x00000003, COUNT_CLASS},
-    { "lh",                                 "addi",  0x0000707f, 0x00001003, COUNT_CLASS},
-    { "lw",                                 "addi",  0x0000707f, 0x00002003, COUNT_CLASS},
-    { "ld",                                 "addi",  0x0000707f, 0x00003003, COUNT_CLASS},
-    { "lbu",                                "addi",  0x0000707f, 0x00004003, COUNT_CLASS},
-    { "lhu",                                "addi",  0x0000707f, 0x00005003, COUNT_CLASS},
-    { "lwu",                                "addi",  0x0000707f, 0x00006003, COUNT_CLASS},
-    { "sb",                                 "addi",  0x0000707f, 0x00000023, COUNT_CLASS},
-    { "sh",                                 "addi",  0x0000707f, 0x00001023, COUNT_CLASS},
-    { "sw",                                 "addi",  0x0000707f, 0x00002023, COUNT_CLASS},
-    { "sd",                                 "addi",  0x0000707f, 0x00003023, COUNT_CLASS},
-    { "th.ldd",                             "addi",  0xf800707f, 0xf800400b, COUNT_CLASS},
-    { "th.lwd",                             "addi",  0xf800707f, 0xe000400b, COUNT_CLASS},
-    { "th.lwud",                            "addi",  0xf800707f, 0xf000400b, COUNT_CLASS},
-    { "th.sdd",                             "addi",  0xf800707f, 0xf800500b, COUNT_CLASS},
-    { "th.swd",                             "addi",  0xf800707f, 0xe000500b, COUNT_CLASS},
+    // { "flw/fld",                            "addi",  0x0000007f, 0x00000007, COUNT_CLASS},
+    // { "fsw/fsd",                            "addi",  0x0000007f, 0x00000027, COUNT_CLASS},
+    // { "branch",                             "addi",  0x00000073, 0x00000063, COUNT_CLASS},
+    // { "Fence",                              "addi",  0x0000007f, 0x0000000f, COUNT_CLASS},
+    // { "Csr",                                "addi",  0x0000007f, 0x00000073, COUNT_CLASS},
+    // { "lb",                                 "addi",  0x0000707f, 0x00000003, COUNT_CLASS},
+    // { "lh",                                 "addi",  0x0000707f, 0x00001003, COUNT_CLASS},
+    // { "lw",                                 "addi",  0x0000707f, 0x00002003, COUNT_CLASS},
+    // { "ld",                                 "addi",  0x0000707f, 0x00003003, COUNT_CLASS},
+    // { "lbu",                                "addi",  0x0000707f, 0x00004003, COUNT_CLASS},
+    // { "lhu",                                "addi",  0x0000707f, 0x00005003, COUNT_CLASS},
+    // { "lwu",                                "addi",  0x0000707f, 0x00006003, COUNT_CLASS},
+    // { "sb",                                 "addi",  0x0000707f, 0x00000023, COUNT_CLASS},
+    // { "sh",                                 "addi",  0x0000707f, 0x00001023, COUNT_CLASS},
+    // { "sw",                                 "addi",  0x0000707f, 0x00002023, COUNT_CLASS},
+    // { "sd",                                 "addi",  0x0000707f, 0x00003023, COUNT_CLASS},
+    // { "th.ldd",                             "addi",  0xf800707f, 0xf800400b, COUNT_CLASS},
+    // { "th.lwd",                             "addi",  0xf800707f, 0xe000400b, COUNT_CLASS},
+    // { "th.lwud",                            "addi",  0xf800707f, 0xf000400b, COUNT_CLASS},
+    // { "th.sdd",                             "addi",  0xf800707f, 0xf800500b, COUNT_CLASS},
+    // { "th.swd",                             "addi",  0xf800707f, 0xe000500b, COUNT_CLASS},
+    { "sh1add",                             "addi",  0xfe00707f, 0x20002033, COUNT_CLASS},
+    { "sh1add.uw",                          "addi",  0xfe00707f, 0x2000203b, COUNT_CLASS},
+    { "sh2add",                             "addi",  0xfe00707f, 0x20004033, COUNT_CLASS},
+    { "sh2add.uw",                          "addi",  0xfe00707f, 0x2000403b, COUNT_CLASS},
+    { "sh3add",                             "addi",  0xfe00707f, 0x20006033, COUNT_CLASS},
+    { "sh3add.uw",                          "addi",  0xfe00707f, 0x2000603b, COUNT_CLASS},
     /* Unclassified */
     { "Unclassified",                       "unclas", 0x00000000, 0x00000000, COUNT_CLASS},
 };
@@ -353,22 +569,29 @@ static void free_record_tb(gpointer data)
 
 static void plugin_exit(qemu_plugin_id_t id, void *p)
 {
-    g_autoptr(GString) report = g_string_new("Instruction Classes:\n");
+    g_autoptr(GString) report = g_string_new("");
     int i;
     GList *counts;
     InsnClassExecCount *class = NULL;
 
     long long sum = 0;
+    long long shadd = 0;
 
     for (i = 0; i < class_table_sz; i++) {
         class = &class_table[i];
         switch (class->what) {
         case COUNT_CLASS:
             if (class->count || verbose) {
-                g_string_append_printf(report,
-                                       "Class: %-24s\t(%" PRId64 " hits)\n",
-                                       class->class,
-                                       class->count);
+                // g_string_append_printf(report,
+                //                        "%d, %d, Class: %-24s\t(%" PRId64 " hits)\n",
+                //                        i, class_table_sz, 
+                //                        class->class,
+                //                        class->count);
+
+                if (i == class_table_sz - 1) {
+                    shadd = sum;
+                }
+
                 sum += class->count;
             }
             break;
@@ -385,29 +608,28 @@ static void plugin_exit(qemu_plugin_id_t id, void *p)
         }
     }
 
-    counts = g_hash_table_get_values(insns);
-    if (counts && g_list_next(counts)) {
-        g_string_append_printf(report, "Individual Instructions:\n");
-        counts = g_list_sort(counts, cmp_exec_count);
+    // counts = g_hash_table_get_values(insns);
+    // if (counts && g_list_next(counts)) {
+    //     g_string_append_printf(report, "Individual Instructions:\n");
+    //     counts = g_list_sort(counts, cmp_exec_count);
 
-        for (i = 0; i < limit && g_list_next(counts);
-             i++, counts = g_list_next(counts)) {
-            InsnExecCount *rec = (InsnExecCount *) counts->data;
-            g_string_append_printf(report,
-                                   "Instr: %-24s\t(%" PRId64 " hits)"
-                                   "\t(op=0x%08x/%s)\n",
-                                   rec->insn,
-                                   rec->count,
-                                   rec->opcode,
-                                   rec->class ?
-                                   rec->class->class : "un-categorised");
-        }
-        g_list_free(counts);
-    }
+    //     for (i = 0; i < limit && g_list_next(counts);
+    //          i++, counts = g_list_next(counts)) {
+    //         InsnExecCount *rec = (InsnExecCount *) counts->data;
+    //         g_string_append_printf(report,
+    //                                "Instr: %-24s\t(%" PRId64 " hits)"
+    //                                "\t(op=0x%08x/%s)\n",
+    //                                rec->insn,
+    //                                rec->count,
+    //                                rec->opcode,
+    //                                rec->class ?
+    //                                rec->class->class : "un-categorised");
+    //     }
+    //     g_list_free(counts);
+    // }
 
-    g_string_append_printf(report, "Sum: \t%" PRId64 " hits\n", sum);
 
-    int *total = calloc(sizeof(int), FusionMax);
+    uint64_t *total = calloc(sizeof(uint64_t), FusionMax);
 
     counts = g_hash_table_get_values(tbs);
     if (counts && g_list_next(counts)) {
@@ -416,22 +638,33 @@ static void plugin_exit(qemu_plugin_id_t id, void *p)
              i++, counts = g_list_next(counts)) {
             TbExecCount *rec = (TbExecCount *) counts->data;
 
-            fprintf(stderr, "TB%d cnt: %d\n", i, rec->cnt);
-
             for(int j=0 ; j < FusionMax ; j++) {
                 total[j] += rec->total_fusion[j];
             }
 
-            for(int i=0;i<FusionMax;i++) {
-                fprintf(stderr, "fusion%d: %d\n", i, rec->total_fusion[i]);
-            }
+            // if (rec->total_fusion[AddLoadPair])
+            //     g_string_append_printf(report, "Tb pc: %x, AddLoadPair: %20ld, Total: %20ld \n", rec->pc, rec->total_fusion[AddLoadPair], total[AddLoadPair]);
+    
         }
         g_list_free(counts);
     }
 
-    for(int i=0;i<FusionMax;i++) {
-        g_string_append_printf(report, "%"PRId64" hits\n", total[i]);
-    }
+    g_string_append_printf(report, "Insts Sum:      \t%20lld hits  \t\n", sum);
+    g_string_append_printf(report, "LuiAddi:    \t%20ld hits  \t%lf\n", total[LuiAddiPair],   (double) total[LuiAddiPair] / sum * 100);
+    g_string_append_printf(report, "ShiftAdd:   \t%20ld hits  \t%lf\n", total[ShiftAddPair],  (double) total[ShiftAddPair] / sum * 100);
+    g_string_append_printf(report, "ShaddLoad:  \t%20ld hits  \t%lf\n", total[ShaddLoadPair],  (double) total[ShaddLoadPair] / sum * 100);
+    g_string_append_printf(report, "AuipcAddi:  \t%20ld hits  \t%lf\n", total[AuipcAddiPair], (double) total[AuipcAddiPair] / sum * 100);
+    g_string_append_printf(report, "SlliSrli:   \t%20ld hits  \t%lf\n", total[SlliSrliPair],  (double) total[SlliSrliPair] / sum * 100);
+    g_string_append_printf(report, "AuipcLoad:  \t%20ld hits  \t%lf\n", total[AuipcLoadPair], (double) total[AuipcLoadPair] / sum * 100);
+    g_string_append_printf(report, "AddLoad:    \t%20ld hits  \t%lf\n", total[AddLoadPair],   (double) total[AddLoadPair] / sum * 100);
+    g_string_append_printf(report, "Load:       \t%20ld hits  \t%lf\n", total[LoadPair],      (double) total[LoadPair] / sum * 100);
+    g_string_append_printf(report, "Store:      \t%20ld hits  \t%lf\n", total[StorePair],     (double) total[StorePair] / sum * 100);
+    // g_string_append_printf(report, "Shadd:      \t%20ld hits  \t%lf\n", shadd,                  (double) shadd / sum * 100);
+
+    
+    // g_string_append_printf(report, "ShiftAddPair:   \t%20ld hits  \t%lf\n", total[ShiftAddPair],  (double) total[ShiftAddPair] / sum * 100);
+    // g_string_append_printf(report, "AddLoadPair:    \t%20ld hits  \t%lf\n", total[AddLoadPair],   (double) total[AddLoadPair] / sum * 100);
+    // g_string_append_printf(report, "ShaddLoadPair:  \t%20ld hits  \t%lf\n", total[ShaddLoadPair],  (double) total[ShaddLoadPair] / sum * 100);
 
     g_hash_table_destroy(insns);
     g_hash_table_destroy(tbs);
@@ -474,30 +707,44 @@ static TbExecCount* find_counter_tb(struct qemu_plugin_tb* tb) {
         icount = g_new0(TbExecCount, 1);
         icount->pc = pc;
         icount->cnt = 0;
-        icount->fusion = calloc(FusionMax, sizeof(uint32_t));
-        icount->total_fusion = calloc(FusionMax, sizeof(uint32_t));
+        icount->fusion = calloc(FusionMax, sizeof(uint64_t));
+        icount->total_fusion = calloc(FusionMax, sizeof(uint64_t));
         
         g_hash_table_insert(tbs, (gpointer) hash, (gpointer) icount);
 
-        fprintf(stderr, "insert hash: %llu, pc: %x to icount: %x\n", hash, pc, icount);
+        // fprintf(stderr, "insert hash: %llu, pc: %x to icount: %x\n", hash, pc, icount);
     }
 
     size_t n = qemu_plugin_tb_n_insns(tb);
-    uint32_t opcode_arr[n];
+
+    inst* prev = calloc(1, sizeof(inst));
+    inst* next = calloc(1, sizeof(inst));
+    inst* tmp;
 
     for(int i=0;i<n;i++) {
         struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
-        opcode_arr[i] = *((uint32_t *)qemu_plugin_insn_data(insn));
+        uint32_t _insn = *((uint32_t *)qemu_plugin_insn_data(insn));
+        decode_insn(next, _insn);
 
         if (i >= 1) {
-            int fusion_type = check_fusion(opcode_arr[i-1], opcode_arr[i]);
+            int fusion_type = check_fusion(prev, next);
             if (fusion_type != -1) {
                 icount->fusion[fusion_type] += 1;
                 i++;
             }
 
-            fprintf(stderr, "fusion_type: %d\n", fusion_type);
+            if (i < n) {
+                struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
+                uint32_t _insn = *((uint32_t *)qemu_plugin_insn_data(insn));
+                decode_insn(prev, _insn);
+            }
+
+            continue;
         }
+
+        tmp = next;
+        next = prev;
+        prev = tmp;
     }
 
 
@@ -586,10 +833,6 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
     }
 
     TbExecCount* icount = find_counter_tb(tb);
-    // fprintf(stderr, "id: %llu, map tb: %x to icount: %x\n", id, &tb, icount);
-    for(int i=0;i<FusionMax;i++) {
-        fprintf(stderr, "fusion%d: %d\n", i, icount->fusion[i]);
-    }
     qemu_plugin_register_vcpu_tb_exec_cb(tb, vcpu_tb_exec_before, QEMU_PLUGIN_CB_NO_REGS, icount);
 }
 
