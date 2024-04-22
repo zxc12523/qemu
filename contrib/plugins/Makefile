@@ -31,6 +31,7 @@ CFLAGS += -fPIC -Wall $(filter -W%, $(QEMU_CFLAGS))
 CFLAGS += $(if $(findstring no-psabi,$(QEMU_CFLAGS)),-Wpsabi)
 CFLAGS += $(if $(CONFIG_DEBUG_TCG), -ggdb -O0)
 CFLAGS += -I$(SRC_PATH)/include/qemu
+CFLAGS += -I$(SRC_PATH)/contrib/plugins
 
 QEMU_DIR ?=
 GLIB_INC ?=`pkg-config --cflags glib-2.0`
