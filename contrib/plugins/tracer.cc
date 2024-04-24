@@ -15,6 +15,7 @@ extern "C" {
 #include <vector>
 #include <algorithm>
 
+#include <glib.h>
 #include <inttypes.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -37,10 +38,12 @@ static std::mutex lock;
 static uint64_t inst_count = 0; /* executed instruction count */
 static uint64_t inst_dumped = 0; /* traced instruction count  */
 
+#ifdef SIMPT
 static std::ifstream simpts_file;
 static std::vector<std::ofstream> trace_files;
 static std::set<uint64_t> interval_set;
 static std::set<uint64_t> interval_cur;
+#endif
 
 static bool tracing_enabled = false;
 static uint32_t max_interval = 0;
@@ -51,17 +54,18 @@ static std::map<uint32_t, uint32_t> interval2idx;
 
 void plugin_exit(qemu_plugin_id_t id, void *p)
 {
+#ifdef SIMPT
     simpts_file.close();
 
     for(int i=0;i<trace_files.size();i++) {
         trace_files[i].close();
     }
-
-    std::cerr << "Inst Counts" << inst_count << '\n';
+#endif
 }
 
 static void plugin_init(std::string& bench_name, std::string& arch)
 {
+#ifdef SIMPT
     std::string simpts_file_name = bench_name + ".simpts";
     simpts_file.open(simpts_file_name.c_str(), std::ifstream::in);
 
@@ -92,6 +96,7 @@ static void plugin_init(std::string& bench_name, std::string& arch)
             trace_files.push_back(std::move(trace_file));
         }
     }
+#endif
 }
 
 static void vcpu_insn_exec_before(unsigned int cpu_index, void *udata)
@@ -105,6 +110,7 @@ static void vcpu_insn_exec_before(unsigned int cpu_index, void *udata)
 
     interval = inst_dumped / INTERVAL_SIZE;
 
+#ifdef SIMPT
     if (interval_cur.find(interval) == interval_cur.end()) {
         std::cerr << "Current Interval: " << interval << '\n';
         std::cerr.flush();
@@ -112,13 +118,12 @@ static void vcpu_insn_exec_before(unsigned int cpu_index, void *udata)
     }
 
     if (interval_set.find(interval) != interval_set.end()) {
-        trace_files[interval2idx[interval]].write((char*)qemu_plugin_insn_data(insn), qemu_plugin_insn_size(insn));
-        if (qemu_plugin_insn_size(insn) == 2) {
-            trace_files[interval2idx[interval]].write("\0\0", 2);
-        }
+        trace_files[interval2idx[interval]] << (char *)udata << '\n';
     }
+#else
+    std::cerr << "0x" << (char *)udata << '\n';
+#endif
 
-    std::cerr << "Inst count: " << std::dec << inst_dumped << " Insn: "  << *(uint32_t*)qemu_plugin_insn_data(insn) << '\n';
 
     // std::cerr << " Instruction: " << (const char*) qemu_plugin_insn_disas(insn) << std::endl;
 
@@ -202,7 +207,11 @@ static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 
         struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
 
-        qemu_plugin_register_vcpu_insn_exec_cb(insn, vcpu_insn_exec_before, QEMU_PLUGIN_CB_NO_REGS, (void *)insn);
+        uint32_t insn_opcode = *((uint32_t *)qemu_plugin_insn_data(insn));
+
+        char *output = g_strdup_printf("%"PRIx32"", insn_opcode);
+
+        qemu_plugin_register_vcpu_insn_exec_cb(insn, vcpu_insn_exec_before, QEMU_PLUGIN_CB_NO_REGS, (void *) output);
         // qemu_plugin_register_vcpu_mem_cb(insn, vcpu_mem, QEMU_PLUGIN_CB_NO_REGS, rw, (void *)pc);
         
         // std::cerr << "Installing inst and mem cbs for insn " << qemu_plugin_insn_disas(insn) << " insn: " << std::hex << *(int*)qemu_plugin_insn_data(insn) << std::endl;

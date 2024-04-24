@@ -37,7 +37,11 @@ QEMU_DIR ?=
 GLIB_INC ?=`pkg-config --cflags glib-2.0`
 CXXFLAGS ?= -g -Wall -std=c++14 -march=native -iquote $(QEMU_DIR)/include/qemu/ $(GLIB_INC) 
 
+SIMPT = 
 
+ifdef SIMPT
+	CXXFLAGS += -DSIMPT
+endif
 
 all: $(SONAMES) libbbv.so libtracer.so
 

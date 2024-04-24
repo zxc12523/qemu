@@ -67,6 +67,12 @@ int decode_insn(inst *new_inst, uint32_t opcode) {
 
     int ret = -1;
 
+    new_inst->opcode = 0;
+    new_inst->rd = 0;
+    new_inst->rs1 = 0;
+    new_inst->rs2 = 0;
+    new_inst->imm = 0;
+
     if ((opcode & 0x7f) == 0x03) { 
         switch ((opcode >> 12) & 0x7)
         {
