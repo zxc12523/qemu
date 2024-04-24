@@ -40,22 +40,20 @@ static uint64_t inst_dumped = 0; /* traced instruction count  */
 
 #ifdef SIMPT
 static std::ifstream simpts_file;
+static std::ifstream weights_file;
 static std::vector<std::ofstream> trace_files;
+static std::vector<double> weights;
 static std::set<uint64_t> interval_set;
 static std::set<uint64_t> interval_cur;
-#endif
-
-static bool tracing_enabled = false;
 static uint32_t max_interval = 0;
-static uint32_t interval = 0;
-
-static std::map<uint64_t, struct qemu_plugin_insn *> instructions;
 static std::map<uint32_t, uint32_t> interval2idx;
+#endif
 
 void plugin_exit(qemu_plugin_id_t id, void *p)
 {
 #ifdef SIMPT
     simpts_file.close();
+    weights_file.close();
 
     for(int i=0;i<trace_files.size();i++) {
         trace_files[i].close();
@@ -67,34 +65,28 @@ static void plugin_init(std::string& bench_name, std::string& arch)
 {
 #ifdef SIMPT
     std::string simpts_file_name = bench_name + ".simpts";
-    simpts_file.open(simpts_file_name.c_str(), std::ifstream::in);
+    std::string weights_file_name = bench_name + ".weights";
 
-    int i = 0;
+    simpts_file.open(simpts_file_name.c_str(), std::ifstream::in);
+    weights_file.open(weights_file_name.c_str(), std::ifstream::in);
 
     while (!simpts_file.eof())
     {
-        std::string line, interval, seq_no;
-        std::getline(simpts_file, line);
+        double weight;
+        int interval, cluster;
 
-        char *s = (char*)line.c_str();
+        simpts_file >> interval >> cluster;
+        weights_file >> weight >> cluster;
+        
+        interval_set.insert(interval);
+        interval2idx[interval] = cluster;
+        weights.push_back(weight);
 
-        // std::cerr << line << std::endl;
+        max_interval = std::max(max_interval, interval);
 
-        // not good enough, FIXME
-        if (!line.empty()) {
-            uint32_t val = atoi(strtok(s, " "));
-            char* group = strtok(NULL, " ");
-
-            std::cerr << "interval: " << val <<  " group: " << group << " idx: " << i << '\n';
-
-            interval_set.insert(val);
-            interval2idx[val] = i;
-            max_interval = std::max(max_interval, val);
-
-            std::string trace_file_name = bench_name + std::to_string(i++) + ".txt";
-            std::ofstream trace_file(trace_file_name.c_str(), std::ofstream::out);
-            trace_files.push_back(std::move(trace_file));
-        }
+        std::string trace_file_name = bench_name + std::to_string(cluster) + ".txt";
+        std::ofstream trace_file(trace_file_name.c_str(), std::ofstream::out);
+        trace_files.push_back(std::move(trace_file));
     }
 #endif
 }
@@ -108,7 +100,7 @@ static void vcpu_insn_exec_before(unsigned int cpu_index, void *udata)
     // char* disas = qemu_plugin_insn_disas(insn);
     // const void* data = qemu_plugin_insn_data(insn);
 
-    interval = inst_dumped / INTERVAL_SIZE;
+    uint32_t interval = inst_dumped / INTERVAL_SIZE;
 
 #ifdef SIMPT
     if (interval_cur.find(interval) == interval_cur.end()) {
